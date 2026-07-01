@@ -1,0 +1,55 @@
+{
+  "actions": {
+    "input_pelayanan_kb": [
+      "input",
+      "masukkan",
+      "isi",
+      "buat",
+      "tambahkan",
+      "entry",
+      "entri"
+    ]
+  },
+  "methods": {
+    "IMPLAN": [
+      "implan",
+      "implant",
+      "susuk"
+    ],
+    "IUD": [
+      "iud",
+      "spiral"
+    ],
+    "SUNTIK": [
+      "suntik",
+      "kb suntik"
+    ],
+    "PIL": [
+      "pil",
+      "kb pil"
+    ],
+    "KONDOM": [
+      "kondom"
+    ],
+    "MOW": [
+      "mow",
+      "tubektomi"
+    ],
+    "MOP": [
+      "mop",
+      "vasektomi"
+    ]
+  },
+  "participant_statuses": {
+    "PUS": [
+      "pus",
+      "pasangan usia subur"
+    ]
+  },
+  "default_intent": {
+    "target_menu": "yankb_pelkon.pelayanan_kb",
+    "source": "search_button",
+    "submit_policy": "preview_then_approval",
+    "participant_status": "PUS"
+  }
+}

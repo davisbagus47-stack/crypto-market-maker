@@ -1,0 +1,27 @@
+{
+  "agent_name": "siga-data-entry-agent",
+  "default_target_menu": "yankb_pelkon.tempat_pelayanan_kb",
+  "dry_run": true,
+  "require_approval": true,
+  "batch_size": 10,
+  "retry": {
+    "enabled": true,
+    "max_attempts": 3,
+    "delay_seconds": 5
+  },
+  "paths": {
+    "input_dir": "data/input",
+    "output_dir": "data/output",
+    "log_dir": "logs"
+  },
+  "siga": {
+    "web_base_url": "https://newsiga-siga.bkkbn.go.id",
+    "api_base_url": "https://siga-api-gateway.bkkbn.go.id",
+    "app_id": 2
+  },
+  "approval": {
+    "approved_marker": "APPROVED",
+    "blocked_statuses": ["error"],
+    "allow_warning_submit": false
+  }
+}

@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+websockets
+httpx
+pydantic
+aiosqlite
+python-dotenv
+pandas
+openpyxl

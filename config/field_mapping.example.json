@@ -1,0 +1,29 @@
+{
+  "mapping_name": "tempat_pelayanan_kb_default",
+  "target_menu": "yankb_pelkon.tempat_pelayanan_kb",
+  "source_type": "csv",
+  "unique_keys": ["kode_faskes"],
+  "required_fields": [
+    "nama_tempat_pelayanan",
+    "kode_faskes",
+    "provinsi",
+    "kabupaten",
+    "kecamatan"
+  ],
+  "fields": {
+    "Nama Tempat Pelayanan": "nama_tempat_pelayanan",
+    "Kode Faskes": "kode_faskes",
+    "Provinsi": "provinsi",
+    "Kabupaten": "kabupaten",
+    "Kecamatan": "kecamatan",
+    "Desa": "desa",
+    "Alamat": "alamat",
+    "No Telepon": "no_telepon",
+    "Email": "email"
+  },
+  "normalization": {
+    "trim_text": true,
+    "uppercase_fields": ["provinsi", "kabupaten", "kecamatan", "desa"],
+    "date_format": "YYYY-MM-DD"
+  }
+}

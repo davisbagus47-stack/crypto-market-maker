@@ -1,0 +1,85 @@
+{
+  "targets": {
+    "yankb_pelkon.tempat_pelayanan_kb": {
+      "section": "YAN KB / PELKON",
+      "group": "Kartu Pendaftaran",
+      "name": "Tempat Pelayanan KB",
+      "url": "/pendaftaran",
+      "strategy": "browser_or_api",
+      "risk": "medium",
+      "workflow": "input_tempat_pelayanan_kb"
+    },
+    "yankb_pelkon.pelayanan_kb": {
+      "section": "YAN KB / PELKON",
+      "group": "Register",
+      "name": "Pelayanan KB",
+      "url": "/register",
+      "strategy": "browser_or_api",
+      "risk": "high",
+      "workflow": "input_pelayanan_kb"
+    },
+    "yankb_pelkon.mutasi_alokon": {
+      "section": "YAN KB / PELKON",
+      "group": "Register",
+      "name": "Mutasi Alokon",
+      "url": "/alokon",
+      "strategy": "browser_or_api",
+      "risk": "high",
+      "workflow": "input_mutasi_alokon"
+    },
+    "dallap.kelompok_bkb": {
+      "section": "DALLAP",
+      "group": "Kartu Pendaftaran > Kelompok Kegiatan",
+      "name": "Kelompok BKB",
+      "url": "/kegiatan/kelompok_bkb",
+      "strategy": "browser_or_api",
+      "risk": "medium",
+      "workflow": "input_kelompok_bkb"
+    },
+    "dallap.kegiatan_bkb": {
+      "section": "DALLAP",
+      "group": "Register > Kelompok Kegiatan",
+      "name": "Kegiatan BKB",
+      "url": "/kegiatan/register_bkb",
+      "strategy": "browser_or_api",
+      "risk": "medium",
+      "workflow": "input_kegiatan_bkb"
+    },
+    "verval_krs.keluarga_berisiko_stunting": {
+      "section": "Verval KRS",
+      "group": "Keluarga Berisiko Stunting",
+      "name": "Keluarga Berisiko Stunting",
+      "url": "/form/stunting",
+      "strategy": "browser_or_api",
+      "risk": "high",
+      "workflow": "input_krs"
+    },
+    "elsimil.catin": {
+      "section": "ELSIMIL",
+      "group": "Pendaftaran",
+      "name": "Catin",
+      "url": "/elsimil/catin",
+      "strategy": "browser_or_api",
+      "risk": "high",
+      "workflow": "input_elsimil_catin"
+    },
+    "elsimil.ibu_hamil": {
+      "section": "ELSIMIL",
+      "group": "Pendaftaran",
+      "name": "Ibu Hamil",
+      "url": "/elsimil/bumil",
+      "strategy": "browser_or_api",
+      "risk": "high",
+      "workflow": "input_elsimil_bumil"
+    },
+    "approval.monitoring": {
+      "section": "APPROVAL",
+      "group": "Monitoring",
+      "name": "Monitoring",
+      "url": "/approvalMonitoring",
+      "strategy": "read_only",
+      "risk": "low",
+      "workflow": "monitoring_approval"
+    }
+  }
+}
