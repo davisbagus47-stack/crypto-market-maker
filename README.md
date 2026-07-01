@@ -2,7 +2,7 @@
 
 Dashboard web untuk memantau kondisi pasar crypto, likuiditas order book, wall activity, alert, analytics, dan report untuk kebutuhan market making.
 
-Aplikasi ini terdiri dari frontend HTML/CSS/JavaScript murni dan backend FastAPI. Backend mengambil data market dari exchange publik, menghitung metrik likuiditas, menyimpan snapshot ke SQLite, lalu menyajikan dashboard melalui API dan static frontend.
+Aplikasi ini terdiri dari frontend HTML/CSS/JavaScript murni dan backend FastAPI. Backend mengambil data market dari exchange publik, menghitung metrik likuiditas, menyimpan snapshot ke SQLite, lalu menyajikannya via REST API.
 
 ## Tech Stack
 
@@ -13,6 +13,7 @@ Aplikasi ini terdiri dari frontend HTML/CSS/JavaScript murni dan backend FastAPI
 | Database | SQLite dengan `aiosqlite` |
 | Data source | Public REST API exchange dan fallback mock generator |
 | Report export | CSV/XLSX dengan `pandas` dan `openpyxl` |
+| Containerization | Docker |
 
 ## Fitur Utama
 
@@ -43,7 +44,10 @@ Aplikasi ini terdiri dari frontend HTML/CSS/JavaScript murni dan backend FastAPI
 |   |-- index.html
 |   |-- app.js
 |   `-- styles.css
-|-- run_backend.bat          # Bootstrap venv, install dependencies, run server
+|-- Dockerfile              # Docker configuration
+|-- docker-compose.yml      # Docker Compose for local testing
+|-- render.yaml             # Render.com deployment config
+|-- run_backend.bat         # Bootstrap venv, install dependencies, run server
 `-- README.md
 ```
 
@@ -171,6 +175,54 @@ frontend/index.html
 
 Backend menyajikan frontend sebagai static files, jadi tidak perlu menjalankan dev server frontend terpisah.
 
+## Deployment
+
+### Docker (Local Testing)
+
+Untuk test aplikasi dengan Docker secara lokal:
+
+```bash
+docker-compose up --build
+```
+
+Aplikasi akan berjalan di `http://localhost:8000`
+
+### Deploy ke Cloud
+
+Aplikasi sudah siap di-deploy ke platform cloud. Ada 2 konfigurasi yang tersedia:
+
+#### 1. **Render.com** (Recommended - Free Tier)
+
+Lihat dokumentasi lengkap di: [`RENDER_DEPLOYMENT.md`](./RENDER_DEPLOYMENT.md)
+
+Quick start:
+1. Buat akun di https://render.com dengan GitHub
+2. Pilih repository ini saat membuat Web Service
+3. Render akan otomatis build dan deploy dari Dockerfile
+4. Aplikasi akan tersedia di URL yang diberikan Render
+
+**Kelebihan:**
+- Free tier tersedia
+- Auto-deploy on git push
+- Persistent disk untuk database SQLite
+- SSL certificate gratis
+
+#### 2. **Canner** (Alternative)
+
+Lihat dokumentasi lengkap di: [`CANNER_DEPLOYMENT.md`](./CANNER_DEPLOYMENT.md)
+
+Proses deployment mirip dengan Render, cukup connect repository Anda ke Canner platform.
+
+### Production Checklist
+
+Sebelum deploy ke production:
+
+- [ ] Update `CORS_ORIGINS` di `backend/config.py` sesuai domain Anda
+- [ ] Ensure persistent disk/volume untuk SQLite database
+- [ ] Set up monitoring untuk `/api/health` endpoint
+- [ ] Configure backups untuk database
+- [ ] Review environment variables di deployment platform
+
 ## Troubleshooting
 
 ### Port 8000 sudah dipakai
@@ -201,9 +253,18 @@ cd backend
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
+### Docker build fails
+
+Pastikan:
+- Dockerfile berada di root repository
+- `backend/requirements.txt` valid dan lengkap
+- Tidak ada file besar di root folder (gunakan `.dockerignore`)
+
 ## Status Saat Ini
 
 - Overview dan Markets sudah disesuaikan agar memakai data backend aktif.
 - Backend FastAPI dan SQLite sudah berjalan.
 - Frontend disajikan langsung dari backend.
+- Docker configuration ready untuk deployment.
+- Deployment guides untuk Render.com dan Canner tersedia.
 - Beberapa bagian menu lain masih bisa terus dirapikan agar seluruh angka demo lama diganti dengan data backend.
