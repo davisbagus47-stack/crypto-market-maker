@@ -1,0 +1,41 @@
+version: 1
+
+services:
+  - type: web
+    name: crypto-market-maker
+    env: docker
+    plan: starter
+    
+    # Build configuration
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    
+    # Port and networking
+    ports:
+      - port: 8000
+        protocol: HTTP
+    
+    # Environment variables
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
+      - key: PORT
+        value: "8000"
+    
+    # Health check
+    healthCheck:
+      path: /api/health
+      interval: 30
+      timeout: 10
+      failureThreshold: 3
+    
+    # Auto-deploy on push to main
+    autoDeploy: true
+
+# Disk/Storage configuration for SQLite database
+disks:
+  - name: data
+    mountPath: /app/backend/data
+    sizeGB: 1
