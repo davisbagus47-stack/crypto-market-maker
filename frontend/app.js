@@ -2371,7 +2371,7 @@ function intervalToMs(interval) {
     "30s": 30000
   };
   if (exact[interval]) return exact[interval];
-  if (["1m", "5m", "15m", "30m"].includes(interval)) return 30000;
+  if (["1m", "5m", "15m", "30m"].includes(interval)) return 5000;
   return 60000;
 }
 
