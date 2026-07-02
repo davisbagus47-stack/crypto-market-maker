@@ -262,7 +262,7 @@ Pastikan:
 
 ## Status Saat Ini
 
-- Overview dan Markets sudah disesuaikan agar memakai data backend aktif.
+- Overview, Markets, dan Liquidity sudah disesuaikan agar memakai data backend aktif.
 - Backend FastAPI dan SQLite sudah berjalan.
 - Frontend disajikan langsung dari backend.
 - Docker configuration ready untuk deployment.

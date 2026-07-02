@@ -1255,6 +1255,12 @@ tbody tr:hover td {
 
 .liquidity-layout {
   grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.55fr);
+  align-items: start;
+}
+
+.liquidity-layout > .panel,
+.liquidity-layout > .grid {
+  align-self: start;
 }
 
 .alerts-layout {
