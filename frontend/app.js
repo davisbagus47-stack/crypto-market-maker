@@ -44,8 +44,9 @@ const state = {
 const API_BASE = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
   ? "http://127.0.0.1:8000/api"
   : "https://crypto-market-maker-production.up.railway.app/api";
-let refreshTimer = null;
 let backendWarningShown = false;
+let socket = null;
+let wsReconnectTimer = null;
 
 const navItems = [
   ["overview", "Overview", "grid"],
@@ -2365,28 +2366,48 @@ function applyBackendData(page, payload) {
   }
 }
 
-function intervalToMs(interval) {
-  const exact = {
-    "1s": 1000,
-    "5s": 5000,
-    "15s": 15000,
-    "30s": 30000
-  };
-  if (exact[interval]) return exact[interval];
-  if (["1m", "5m", "15m", "30m"].includes(interval)) return 5000;
-  return 60000;
+function resolveWebSocketUrl() {
+  const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+  const host = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+    ? "127.0.0.1:8000"
+    : window.location.host;
+  return `${protocol}${host}/ws`;
 }
 
-function scheduleAutoRefresh() {
-  window.clearTimeout(refreshTimer);
-  refreshTimer = window.setTimeout(async () => {
-    if (state.autoRefresh) {
-      const ok = await fetchDashboardData(state.page, { silent: true });
-      if (!ok) mutateMarket();
+function connectWebSocket() {
+  window.clearTimeout(wsReconnectTimer);
+
+  socket = new WebSocket(resolveWebSocketUrl());
+
+  socket.onopen = () => {
+    backendWarningShown = false;
+  };
+
+  socket.onmessage = (event) => {
+    if (!state.autoRefresh) return;
+    try {
+      const payload = JSON.parse(event.data);
+      applyBackendData(state.page, payload);
+      renderApp();
+    } catch (error) {
+      console.error("Failed to parse WebSocket payload", error);
+    }
+  };
+
+  socket.onerror = () => {
+    socket.close();
+  };
+
+  socket.onclose = () => {
+    if (!backendWarningShown) {
+      showToast("Backend unavailable, using local fallback data.");
+      backendWarningShown = true;
+      mutateMarket();
       renderApp();
     }
-    scheduleAutoRefresh();
-  }, intervalToMs(state.timeframe));
+    // Auto-reconnect: coba sambung ulang dalam 3 detik jika koneksi terputus mendadak.
+    wsReconnectTimer = window.setTimeout(connectWebSocket, 3000);
+  };
 }
 
 async function saveSettingsToBackend() {
@@ -2510,14 +2531,14 @@ document.addEventListener("click", (event) => {
     state.overviewPage = 1;
     state.lastUpdate = new Date();
     renderApp();
-    scheduleAutoRefresh();
     fetchDashboardData(state.page).then(() => renderApp());
   }
   if (action === "auto-refresh") {
+    // Toggle ini sekarang mengatur apakah update real-time dari WebSocket
+    // diterapkan ke UI atau tidak; koneksi WS sendiri tetap terbuka.
     state.autoRefresh = !state.autoRefresh;
     state.timeframeMenuOpen = false;
     renderApp();
-    scheduleAutoRefresh();
   }
   if (action === "overview-page") {
     const page = Number(target.dataset.page);
@@ -2592,166 +2613,4 @@ document.addEventListener("input", (event) => {
 
 renderApp();
 fetchDashboardData(state.page, { silent: true }).then(() => renderApp());
-scheduleAutoRefresh();
-
-function barChart(data, options = {}) {
-  const width = 460;
-  const height = options.height || 210;
-  const max = Math.max(...data.map((d) => Math.abs(d.value)), 1);
-  const pad = { left: 42, top: 18, right: 20, bottom: 34 };
-  const innerW = width - pad.left - pad.right;
-  const innerH = height - pad.top - pad.bottom;
-  if (options.horizontal) {
-    const rowH = innerH / data.length;
-    const bars = data
-      .map((d, index) => {
-        const y = pad.top + index * rowH + 5;
-        const w = (Math.abs(d.value) / max) * innerW;
-        return `
-          <text x="${pad.left - 8}" y="${y + rowH / 2 + 4}" text-anchor="end" fill="#cbd9e8" font-size="11">${d.label}</text>
-          <rect x="${pad.left}" y="${y}" width="${w}" height="${Math.max(10, rowH - 10)}" rx="3" fill="${d.color || palette.cyan}" opacity="0.86"></rect>
-          <text x="${pad.left + w + 8}" y="${y + rowH / 2 + 4}" fill="#fff" font-size="11">${d.value}</text>
-        `;
-      })
-      .join("");
-    return `<div class="chart compact"><svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">${bars}</svg></div>`;
-  }
-  const zero = pad.top + innerH * (options.hasNegative ? 0.5 : 1);
-  const barW = innerW / data.length - 8;
-  const bars = data
-    .map((d, index) => {
-      const x = pad.left + index * (innerW / data.length) + 4;
-      const h = (Math.abs(d.value) / max) * (options.hasNegative ? innerH / 2 : innerH);
-      const y = d.value < 0 ? zero : zero - h;
-      return `
-        <rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="3" fill="${d.color || (d.value < 0 ? palette.red : palette.green)}" opacity="0.9"></rect>
-        ${options.showValues ? `<text x="${x + barW / 2}" y="${y - 5}" text-anchor="middle" fill="#fff" font-size="11">${d.value}</text>` : ""}
-        <text x="${x + barW / 2}" y="${height - 10}" text-anchor="middle" fill="#9db2c9" font-size="10">${d.label}</text>
-      `;
-    })
-    .join("");
-  const grid = [0.25, 0.5, 0.75, 1]
-    .map((t) => `<path d="M${pad.left} ${pad.top + innerH * t}H${width - pad.right}" stroke="rgba(150,186,219,.13)" stroke-dasharray="3 4"></path>`)
-    .join("");
-  return `
-    <div class="chart ${options.compact ? "compact" : ""}">
-      <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
-        ${grid}
-        <path d="M${pad.left} ${zero}H${width - pad.right}" fill="none" stroke="rgba(150,186,219,.2)"></path>
-        ${bars}
-      </svg>
-    </div>
-  `;
-}
-
-function donut(segments, centerText = "") {
-  let start = 0;
-  const gradient = segments
-    .map((segment) => {
-      const end = start + segment.value;
-      const part = `${segment.color} ${start}% ${end}%`;
-      start = end;
-      return part;
-    })
-    .join(", ");
-  return `
-    <div class="progress-ring" style="--progress: 100%; background: radial-gradient(circle at center, #0c1928 56%, transparent 57%), conic-gradient(${gradient});">
-      <div style="text-align:center;font-weight:800">${centerText}</div>
-    </div>
-  `;
-}
-
-function gauge(value, label = "", color = palette.green) {
-  const angle = Math.max(0, Math.min(100, value));
-  return `
-    <div class="score-gauge">
-      <div class="progress-ring" style="--progress:${angle}%"></div>
-      <strong>${value}</strong>
-      <span class="${value >= 75 ? "text-good" : value >= 55 ? "text-warn" : "text-bad"}">${label}</span>
-    </div>
-  `;
-}
-
-function kpiCard({ title, value, unit = "", delta = "", direction = "good", color = palette.blue, series, extra = "" }) {
-  return `
-    <article class="kpi-card">
-      <div class="kpi-head"><span>${title}</span><span class="info-dot">i</span></div>
-      <div class="kpi-value">${value}${unit ? `<small>${unit}</small>` : ""}</div>
-      <div class="delta ${direction}">${direction === "bad" ? "&#9660;" : "&#9650;"} ${delta}</div>
-      ${extra || sparkline(series || values(value.length || 4, 28, 0.25), color, color === palette.green)}
-    </article>
-  `;
-}
-
-function panel(title, body, actions = "", className = "") {
-  return `
-    <section class="panel ${className}">
-      <div class="panel-header">
-        <h2 class="panel-title">${title}</h2>
-        <div class="panel-actions">${actions}</div>
-      </div>
-      ${body}
-    </section>
-  `;
-}
-
-function tokenFromPair(pair) {
-  return String(pair.key || pair.symbol || "")
-    .replace("/", "")
-    .replace(/USDT$/i, "")
-    .toUpperCase();
-}
-
-function hashHue(text) {
-  let hash = 0;
-  for (const char of text) hash = (hash * 31 + char.charCodeAt(0)) % 360;
-  return hash;
-}
-
-function tokenLogo(token) {
-  const logoToken = tokenLogoAliases[token] || token;
-  const configured = tokenLogos[logoToken];
-  const image = tokenLogoImages[logoToken];
-  if (configured) return { label: configured[0], bg: configured[1], fg: configured[2] };
-  const hue = hashHue(token || "COIN");
-  const label = (token || "??").slice(0, 2);
-  return {
-    label,
-    bg: `linear-gradient(145deg, hsl(${hue} 86% 62%), hsl(${(hue + 34) % 360} 76% 36%))`,
-    fg: "#fff",
-    image
-  };
-}
-
-function coin(pair) {
-  const token = tokenFromPair(pair);
-  const logo = tokenLogo(token);
-  const image = tokenLogoImages[tokenLogoAliases[token] || token];
-  return `
-    <span class="coin ${image ? "has-image" : "is-fallback"}" title="${token}" style="--coin-bg:${logo.bg};--coin-fg:${logo.fg}">
-      ${image ? `<img src="${image}" alt="${token}" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove();this.parentElement.classList.remove('has-image');this.parentElement.classList.add('is-fallback');">` : ""}
-      <span class="coin-label">${logo.label}</span>
-    </span>
-  `;
-}
-
-function pairMarkup(pair) {
-  return `<span class="pair">${coin(pair)}${pair.symbol}</span>`;
-}
-
-function statusBadge(label) {
-  const normalized = String(label).toLowerCase();
-  const type =
-    normalized.includes("critical") || normalized.includes("low") || normalized.includes("weak") || normalized.includes("unacknowledged")
-      ? "bad"
-      : normalized.includes("warning") || normalized.includes("medium") || normalized.includes("caution") || normalized.includes("processing")
-        ? "warn"
-        : normalized.includes("info")
-          ? "info"
-          : normalized.includes("custom") || normalized.includes("comparison")
-            ? "violet"
-            : normalized.includes("daily") || normalized.includes("completed") || normalized.includes("active") || normalized.includes("high") || normalized.includes("healthy")
-              ? "good"
-              : "neutral";
-  return `<span class="badge ${type}">${label}</span>`;
-}
+connectWebSocket();
