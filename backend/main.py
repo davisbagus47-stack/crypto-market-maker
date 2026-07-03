@@ -558,56 +558,6 @@ function lineChart(seriesList, options = {}) {
   `;
 }
 
-function barChart(data, options = {}) {
-  const width = 460;
-  const height = options.height || 210;
-  const max = Math.max(...data.map((d) => Math.abs(d.value)), 1);
-  const pad = { left: 42, top: 18, right: 20, bottom: 34 };
-  const innerW = width - pad.left - pad.right;
-  const innerH = height - pad.top - pad.bottom;
-  if (options.horizontal) {
-    const rowH = innerH / data.length;
-    const bars = data
-      .map((d, index) => {
-        const y = pad.top + index * rowH + 5;
-        const w = (Math.abs(d.value) / max) * innerW;
-        return `
-          <text x="${pad.left - 8}" y="${y + rowH / 2 + 4}" text-anchor="end" fill="#cbd9e8" font-size="11">${d.label}</text>
-          <rect x="${pad.left}" y="${y}" width="${w}" height="${Math.max(10, rowH - 10)}" rx="3" fill="${d.color || palette.cyan}" opacity="0.86"></rect>
-          <text x="${pad.left + w + 8}" y="${y + rowH / 2 + 4}" fill="#fff" font-size="11">${d.value}</text>
-        `;
-      })
-      .join("");
-    return `<div class="chart compact"><svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">${bars}</svg></div>`;
-  }
-  const zero = pad.top + innerH * (options.hasNegative ? 0.5 : 1);
-  const barW = innerW / data.length - 8;
-  const bars = data
-    .map((d, index) => {
-      const x = pad.left + index * (innerW / data.length) + 4;
-      const h = (Math.abs(d.value) / max) * (options.hasNegative ? innerH / 2 : innerH);
-      const y = d.value < 0 ? zero : zero - h;
-      return `
-        <rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="3" fill="${d.color || (d.value < 0 ? palette.red : palette.green)}" opacity="0.9"></rect>
-        ${options.showValues ? `<text x="${x + barW / 2}" y="${y - 5}" text-anchor="middle" fill="#fff" font-size="11">${d.value}</text>` : ""}
-        <text x="${x + barW / 2}" y="${height - 10}" text-anchor="middle" fill="#9db2c9" font-size="10">${d.label}</text>
-      `;
-    })
-    .join("");
-  const grid = [0.25, 0.5, 0.75, 1]
-    .map((t) => `<path d="M${pad.left} ${pad.top + innerH * t}H${width - pad.right}" stroke="rgba(150,186,219,.13)" stroke-dasharray="3 4"></path>`)
-    .join("");
-  return `
-    <div class="chart ${options.compact ? "compact" : ""}">
-      <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
-        ${grid}
-        <path d="M${pad.left} ${zero}H${width - pad.right}" fill="none" stroke="rgba(150,186,219,.2)"></path>
-        ${bars}
-      </svg>
-    </div>
-  `;
-}
-
 function donut(segments, centerText = "") {
   let start = 0;
   const gradient = segments
