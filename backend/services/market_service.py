@@ -492,6 +492,28 @@ async def get_aggregated_market_data(
         data["avg_volume_24h"] /= bc
         data["avg_change_24h"] /= bc
 
+    # ---- Also fetch the latest orderbook snapshots for bids/asks ----
+    book_query = f"""
+        SELECT symbol, bids_json, asks_json
+        FROM orderbook_snapshots
+        WHERE exchange = ?
+          AND symbol IN ({symbol_list})
+          AND timestamp >= ?
+        ORDER BY timestamp DESC
+    """
+    book_rows = await fetch_all(book_query, (selected_exchange, cutoff))
+    # Keep only the most recent snapshot per symbol
+    book_map: dict[str, dict] = {}
+    for row in book_rows:
+        sym = row["symbol"]
+        if sym not in book_map:
+            try:
+                bids = json.loads(row["bids_json"]) if row["bids_json"] else []
+                asks = json.loads(row["asks_json"]) if row["asks_json"] else []
+            except (json.JSONDecodeError, TypeError):
+                bids, asks = [], []
+            book_map[sym] = {"bids": bids, "asks": asks}
+
     # Build pair metrics from aggregated data
     pairs = []
     for symbol in selected_symbols:
@@ -499,6 +521,8 @@ async def get_aggregated_market_data(
         if not agg or agg["snapshot_count"] == 0:
             # No historical data for this symbol in the window — skip
             continue
+
+        book = book_map.get(symbol, {"bids": [], "asks": []})
 
         total_bid = agg["total_bid_qty"]
         total_ask = agg["total_ask_qty"]
@@ -553,8 +577,8 @@ async def get_aggregated_market_data(
             "ofi": round(imbalance, 6),
             "volatility": round(abs(imbalance) * 2.4, 6),
             "impact": round(spread_pct * 0.2, 6),
-            "bids": [],
-            "asks": [],
+            "bids": book["bids"],
+            "asks": book["asks"],
             "timestamp": now_iso(),
             "aggregated": True,
             "snapshotCount": agg["snapshot_count"],

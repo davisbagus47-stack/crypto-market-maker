@@ -34,11 +34,16 @@ def regime_summary(pairs: list[dict]) -> dict:
 
 
 async def get_analytics(exchange: str, symbols: list[str] | None, interval: str) -> dict:
-    # Use aggregated data for intervals > 30s
-    if interval_to_seconds(interval) > 30:
+    use_aggregated = interval_to_seconds(interval) > 30
+
+    if use_aggregated:
         market = await get_aggregated_market_data(exchange, symbols, interval)
-    else:
+        if not market.get("pairs"):
+            market = await get_market_data(exchange, symbols, interval)
+
+    if not use_aggregated or not market.get("pairs"):
         market = await get_market_data(exchange, symbols, interval)
+
     pairs = market["pairs"]
     avg_spread = sum(pair["spreadPct"] for pair in pairs) / len(pairs) if pairs else 0
     avg_volatility = sum(pair["volatility"] for pair in pairs) / len(pairs) if pairs else 0

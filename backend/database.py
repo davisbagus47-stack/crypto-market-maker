@@ -93,6 +93,13 @@ async def init_db() -> None:
             )
             """
         )
+        # Index for time-window orderbook queries
+        await db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_orderbook_snapshots_exchange_symbol_ts
+            ON orderbook_snapshots (exchange, symbol, timestamp)
+            """
+        )
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS walls (
@@ -110,6 +117,13 @@ async def init_db() -> None:
                 status TEXT,
                 created_at TEXT
             )
+            """
+        )
+        # Index for time-window wall queries
+        await db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_walls_exchange_symbol_ts
+            ON walls (exchange, symbol, timestamp)
             """
         )
         await db.execute(
