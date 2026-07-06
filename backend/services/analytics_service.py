@@ -1,8 +1,8 @@
 import json
 import math
 
-from database import execute, now_iso
-from services.market_service import get_market_data
+from database import execute, interval_to_seconds, now_iso
+from services.market_service import get_aggregated_market_data, get_market_data
 
 
 def correlation_matrix(pairs: list[dict]) -> list[dict]:
@@ -34,7 +34,11 @@ def regime_summary(pairs: list[dict]) -> dict:
 
 
 async def get_analytics(exchange: str, symbols: list[str] | None, interval: str) -> dict:
-    market = await get_market_data(exchange, symbols, interval)
+    # Use aggregated data for intervals > 30s
+    if interval_to_seconds(interval) > 30:
+        market = await get_aggregated_market_data(exchange, symbols, interval)
+    else:
+        market = await get_market_data(exchange, symbols, interval)
     pairs = market["pairs"]
     avg_spread = sum(pair["spreadPct"] for pair in pairs) / len(pairs) if pairs else 0
     avg_volatility = sum(pair["volatility"] for pair in pairs) / len(pairs) if pairs else 0

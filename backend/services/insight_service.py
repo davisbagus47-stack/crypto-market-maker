@@ -11,7 +11,33 @@ def build_insights(pairs: list[dict], wall_summary: dict | None = None) -> list[
 
     liquidity_title = "Healthy Liquidity" if avg_liquidity >= 70 and avg_spread < 0.05 else "Liquidity Needs Attention"
     liquidity_tone = "good" if avg_liquidity >= 70 else "warn" if avg_liquidity >= 50 else "bad"
-    pressure_title = "Buyer Pressure" if buy_walls >= sell_walls or total_imbalance >= 0 else "Seller Pressure"
+
+    # Correct bias logic: positive imbalance = Buyer Dominant, negative = Seller Dominant
+    # Wall counts are secondary signal; imbalance is the primary indicator
+    if total_imbalance > 0.05:
+        pressure_title = "Buyer Dominant"
+        pressure_tone = "good"
+        pressure_text = f"Order book imbalance is positive (+{total_imbalance:.4f}) — buy-side liquidity outweighs sell-side across selected markets."
+    elif total_imbalance < -0.05:
+        pressure_title = "Seller Dominant"
+        pressure_tone = "warn"
+        pressure_text = f"Order book imbalance is negative ({total_imbalance:.4f}) — sell-side liquidity outweighs buy-side across selected markets."
+    else:
+        # Near-neutral: use wall counts as tiebreaker
+        if buy_walls > sell_walls:
+            pressure_title = "Buyer Pressure"
+            pressure_tone = "good"
+        elif sell_walls > buy_walls:
+            pressure_title = "Seller Pressure"
+            pressure_tone = "warn"
+        else:
+            pressure_title = "Balanced"
+            pressure_tone = "good"
+        pressure_text = (
+            f"Buy walls: {buy_walls}, Sell walls: {sell_walls} detected this interval. "
+            "Order book is near equilibrium."
+        )
+
     risk_pair = min(pairs, key=lambda pair: pair["liquidity"])
     slippage_title = "Low Slippage" if avg_slippage < 0.03 else "Elevated Slippage"
 
@@ -27,10 +53,8 @@ def build_insights(pairs: list[dict], wall_summary: dict | None = None) -> list[
         {
             "label": "Buyer vs Seller",
             "title": pressure_title,
-            "tone": "good" if pressure_title == "Buyer Pressure" else "warn",
-            "text": "Buy wall activity exceeds sell wall activity across majority of markets."
-            if pressure_title == "Buyer Pressure"
-            else "Sell wall activity is stronger across the selected market set.",
+            "tone": pressure_tone,
+            "text": pressure_text,
         },
         {
             "label": "Risk / Attention",

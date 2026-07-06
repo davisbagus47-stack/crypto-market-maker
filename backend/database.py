@@ -1,5 +1,6 @@
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import aiosqlite
@@ -9,6 +10,27 @@ from config import DATA_DIR, DB_PATH, DEFAULT_SETTINGS, TIMEZONE
 
 def now_iso() -> str:
     return datetime.now(ZoneInfo(TIMEZONE)).isoformat(timespec="seconds")
+
+
+def interval_to_seconds(interval: str) -> int:
+    """Convert interval string (e.g. '5m', '1h', '1D') to total seconds."""
+    match = re.match(r"^(\d+)([smhDWM])$", interval, re.IGNORECASE)
+    if not match:
+        return 300  # default 5 minutes
+    value = int(match.group(1))
+    unit = match.group(2).upper()
+    multipliers = {"S": 1, "M": 60, "H": 3600, "D": 86400, "W": 604800}
+    if unit == "M" and value > 31:
+        # Treat as months (~30 days each)
+        return value * 30 * 86400
+    return value * multipliers.get(unit, 60)
+
+
+def compute_window_cutoff(interval: str) -> str:
+    """Compute the cutoff timestamp (ISO) for a moving-window query, in the app timezone."""
+    seconds = interval_to_seconds(interval)
+    cutoff = datetime.now(ZoneInfo(TIMEZONE)) - timedelta(seconds=seconds)
+    return cutoff.isoformat(timespec="seconds")
 
 
 async def init_db() -> None:
@@ -44,6 +66,13 @@ async def init_db() -> None:
                 open_interest REAL,
                 created_at TEXT
             )
+            """
+        )
+        # Composite index for time-window aggregation queries
+        await db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_market_snapshots_exchange_symbol_ts
+            ON market_snapshots (exchange, symbol, timestamp)
             """
         )
         await db.execute(

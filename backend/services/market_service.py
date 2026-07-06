@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from config import BASE_PRICES, FALLBACK_TOP_SYMBOLS, SYMBOL_DISPLAY, normalize_exchange
-from database import execute_many, now_iso
+from database import compute_window_cutoff, execute_many, fetch_all, interval_to_seconds, now_iso
 from exchange.base_adapter import BaseExchangeAdapter
 from exchange.binance_adapter import BinanceAdapter
 from exchange.bybit_adapter import BybitAdapter
@@ -349,3 +349,230 @@ async def persist_market_data(pairs: list[dict[str, Any]]) -> None:
         """,
         orderbook_rows,
     )
+
+
+# ---------------------------------------------------------------------------
+# Moving-window aggregation: query historical snapshots from SQLite
+# ---------------------------------------------------------------------------
+
+# Thresholds for choosing aggregation strategy
+_SHORT_INTERVAL_SECONDS = 30  # <=30s uses real-time snapshot
+_LONG_INTERVAL_SECONDS = 86400  # >=1D uses downsampling
+
+
+def _downsample_group_seconds(interval: str) -> int:
+    """Return the bucket size (seconds) for downsampling long timeframes."""
+    total = interval_to_seconds(interval)
+    if total >= 86400 * 25:  # ~1M or more → daily buckets
+        return 86400
+    if total >= 86400 * 3:  # >=3D → 4-hour buckets
+        return 14400
+    if total >= 86400:  # >=1D → hourly buckets
+        return 3600
+    return 300  # fallback: 5-min buckets
+
+
+async def get_aggregated_market_data(
+    exchange: str | None,
+    symbols: list[str] | None = None,
+    interval: str = "5m",
+) -> dict[str, Any]:
+    """
+    Return market metrics aggregated over a moving time window.
+
+    For intervals <= 30s this falls back to the real-time snapshot path
+    (there is not enough historical data to aggregate meaningfully).
+
+    For longer intervals it queries the ``market_snapshots`` table, sums
+    bid_qty / ask_qty over the window, and recomputes imbalance with the
+    correct sign convention (positive → Buyer Dominant).
+
+    For very long intervals (>= 1 day) the raw per-second rows are
+    downsampled into time buckets to keep the query fast.
+    """
+    selected_exchange = normalize_exchange(exchange)
+    total_seconds = interval_to_seconds(interval)
+
+    # Short intervals → use live snapshot (no historical aggregation)
+    if total_seconds <= _SHORT_INTERVAL_SECONDS:
+        return await get_market_data(selected_exchange, symbols, interval, persist=False)
+
+    selected_symbols = symbols[:] if symbols else FALLBACK_TOP_SYMBOLS[:TOP_PAIR_LIMIT]
+
+    cutoff = compute_window_cutoff(interval)
+    symbol_list = ",".join(f"'{s}'" for s in selected_symbols)
+
+    # ---- Build the aggregation query ----
+    # For long timeframes we downsample into time buckets to avoid scanning
+    # millions of rows.  Each bucket becomes one "virtual snapshot" whose
+    # bid_qty / ask_qty are the SUM within that bucket.
+    if total_seconds >= _LONG_INTERVAL_SECONDS:
+        bucket_sec = _downsample_group_seconds(interval)
+        # SQLite: group by strftime('%Y-%m-%d %H:', timestamp) for hourly, etc.
+        # We use a simpler approach: assign each row to a bucket number
+        # based on (julianday(timestamp) * 86400 / bucket_sec)
+        query = f"""
+            SELECT
+                symbol,
+                SUM(bid_qty)   AS total_bid_qty,
+                SUM(ask_qty)   AS total_ask_qty,
+                AVG(last_price) AS avg_last_price,
+                AVG(best_bid)  AS avg_best_bid,
+                AVG(best_ask)  AS avg_best_ask,
+                AVG(spread_pct) AS avg_spread_pct,
+                AVG(volume_24h) AS avg_volume_24h,
+                AVG(change_24h) AS avg_change_24h,
+                COUNT(*)       AS snapshot_count
+            FROM market_snapshots
+            WHERE exchange = ?
+              AND symbol IN ({symbol_list})
+              AND timestamp >= ?
+            GROUP BY symbol,
+                     CAST((julianday(timestamp) * 86400.0 / {bucket_sec}) AS INTEGER)
+        """
+    else:
+        # Medium intervals (1m – 12h): aggregate all snapshots in the window
+        query = f"""
+            SELECT
+                symbol,
+                SUM(bid_qty)    AS total_bid_qty,
+                SUM(ask_qty)    AS total_ask_qty,
+                AVG(last_price)  AS avg_last_price,
+                AVG(best_bid)    AS avg_best_bid,
+                AVG(best_ask)    AS avg_best_ask,
+                AVG(spread_pct)  AS avg_spread_pct,
+                AVG(volume_24h)  AS avg_volume_24h,
+                AVG(change_24h)  AS avg_change_24h,
+                COUNT(*)         AS snapshot_count
+            FROM market_snapshots
+            WHERE exchange = ?
+              AND symbol IN ({symbol_list})
+              AND timestamp >= ?
+            GROUP BY symbol
+        """
+
+    rows = await fetch_all(query, (selected_exchange, cutoff))
+
+    # Build a lookup: symbol → aggregated values
+    agg_map: dict[str, dict] = {}
+    for row in rows:
+        sym = row["symbol"]
+        if sym not in agg_map:
+            agg_map[sym] = {
+                "total_bid_qty": 0.0,
+                "total_ask_qty": 0.0,
+                "avg_last_price": 0.0,
+                "avg_best_bid": 0.0,
+                "avg_best_ask": 0.0,
+                "avg_spread_pct": 0.0,
+                "avg_volume_24h": 0.0,
+                "avg_change_24h": 0.0,
+                "snapshot_count": 0,
+                "bucket_count": 0,
+            }
+        agg_map[sym]["total_bid_qty"] += float(row["total_bid_qty"] or 0)
+        agg_map[sym]["total_ask_qty"] += float(row["total_ask_qty"] or 0)
+        # For averages we take a weighted average across buckets
+        agg_map[sym]["avg_last_price"] += float(row["avg_last_price"] or 0)
+        agg_map[sym]["avg_best_bid"] += float(row["avg_best_bid"] or 0)
+        agg_map[sym]["avg_best_ask"] += float(row["avg_best_ask"] or 0)
+        agg_map[sym]["avg_spread_pct"] += float(row["avg_spread_pct"] or 0)
+        agg_map[sym]["avg_volume_24h"] += float(row["avg_volume_24h"] or 0)
+        agg_map[sym]["avg_change_24h"] += float(row["avg_change_24h"] or 0)
+        agg_map[sym]["snapshot_count"] += int(row["snapshot_count"] or 0)
+        agg_map[sym]["bucket_count"] += 1
+
+    # Finalize averages (divide by number of buckets)
+    for sym, data in agg_map.items():
+        bc = max(data["bucket_count"], 1)
+        data["avg_last_price"] /= bc
+        data["avg_best_bid"] /= bc
+        data["avg_best_ask"] /= bc
+        data["avg_spread_pct"] /= bc
+        data["avg_volume_24h"] /= bc
+        data["avg_change_24h"] /= bc
+
+    # Build pair metrics from aggregated data
+    pairs = []
+    for symbol in selected_symbols:
+        agg = agg_map.get(symbol)
+        if not agg or agg["snapshot_count"] == 0:
+            # No historical data for this symbol in the window — skip
+            continue
+
+        total_bid = agg["total_bid_qty"]
+        total_ask = agg["total_ask_qty"]
+        last_price = agg["avg_last_price"]
+        best_bid = agg["avg_best_bid"]
+        best_ask = agg["avg_best_ask"]
+        spread_pct = agg["avg_spread_pct"]
+
+        # Correct imbalance formula: (bid - ask) / (bid + ask)
+        # Positive → Buyer Dominant, Negative → Seller Dominant
+        total_depth = total_bid + total_ask
+        imbalance = ((total_bid - total_ask) / total_depth) if total_depth > 0 else 0.0
+
+        # For aggregated data, bidDepth/askDepth represent the summed top-of-book
+        # quantity over the window — a measure of cumulative liquidity
+        bid_depth = total_bid * (best_bid if best_bid > 0 else 1)
+        ask_depth = total_ask * (best_ask if best_ask > 0 else 1)
+
+        score = liquidity_score(spread_pct, bid_depth, ask_depth, imbalance, 0.0)
+
+        pairs.append({
+            "exchange": selected_exchange,
+            "symbol": display_symbol(symbol),
+            "displaySymbol": display_symbol(symbol),
+            "key": symbol,
+            "price": round(last_price, 8),
+            "lastPrice": round(last_price, 8),
+            "bestBid": round(best_bid, 8),
+            "bestAsk": round(best_ask, 8),
+            "bidQty": round(total_bid, 8),
+            "askQty": round(total_ask, 8),
+            "spread": round(spread_pct, 6),
+            "spreadAbs": round((best_ask - best_bid) if best_ask and best_bid else 0, 8),
+            "spreadPct": round(spread_pct, 6),
+            "maxSpread": round(spread_pct * 3.5, 6),
+            "change": round(agg["avg_change_24h"], 4),
+            "change24h": round(agg["avg_change_24h"], 4),
+            "volume": round(agg["avg_volume_24h"] / 1_000_000_000, 4),
+            "volume24h": round(agg["avg_volume_24h"], 2),
+            "marketCap": round(market_cap_estimate(symbol, last_price) / 1_000_000_000, 4),
+            "futuresVol": round((agg["avg_volume_24h"] * 1.75) / 1_000_000_000, 4),
+            "oi": round(agg["avg_volume_24h"] * 0.31 / 1_000_000_000, 4),
+            "funding": 0.0,
+            "basis": round(spread_pct / 3, 4),
+            "bidDepth": round(bid_depth, 2),
+            "askDepth": round(ask_depth, 2),
+            "imbalance": round(imbalance, 6),
+            "slippage": 0.0,
+            "liquidity": score,
+            "resilience": round(clamp(score / 100 - abs(imbalance) * 0.15, 0, 1), 4),
+            "regime": "High" if score >= 75 else "Medium" if score >= 55 else "Low",
+            "ofi": round(imbalance, 6),
+            "volatility": round(abs(imbalance) * 2.4, 6),
+            "impact": round(spread_pct * 0.2, 6),
+            "bids": [],
+            "asks": [],
+            "timestamp": now_iso(),
+            "aggregated": True,
+            "snapshotCount": agg["snapshot_count"],
+            "interval": interval,
+        })
+
+    return {
+        "exchange": selected_exchange,
+        "interval": interval,
+        "sourceStatus": "aggregated",
+        "tickerStatus": "aggregated",
+        "orderbookStatus": "aggregated",
+        "symbolCount": len(pairs),
+        "topSymbols": [p["key"] for p in pairs],
+        "realTickerCount": 0,
+        "realOrderbookCount": 0,
+        "exchangeError": None,
+        "exchangeSource": "sqlite_aggregation",
+        "lastUpdate": now_iso(),
+        "pairs": pairs,
+    }

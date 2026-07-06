@@ -2,7 +2,8 @@ from fastapi import APIRouter, Query
 
 from api.response import envelope
 from config import parse_symbols
-from services.market_service import get_market_data
+from database import interval_to_seconds
+from services.market_service import get_aggregated_market_data, get_market_data
 
 router = APIRouter(prefix="/api", tags=["markets"])
 
@@ -13,7 +14,11 @@ async def markets(
     symbols: str | None = Query(None),
     interval: str = "5m",
 ) -> dict:
-    market = await get_market_data(exchange, parse_symbols(symbols) if symbols else None, interval)
+    parsed_symbols = parse_symbols(symbols) if symbols else None
+    if interval_to_seconds(interval) > 30:
+        market = await get_aggregated_market_data(exchange, parsed_symbols, interval)
+    else:
+        market = await get_market_data(exchange, parsed_symbols, interval)
     total_market_cap = sum(pair["marketCap"] for pair in market["pairs"]) * 1_000_000_000
     return envelope(
         source_status=market["sourceStatus"],

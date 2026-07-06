@@ -2,6 +2,7 @@ from fastapi import APIRouter, Query
 
 from api.response import envelope
 from config import parse_symbols
+from database import interval_to_seconds
 from services import alert_service, market_service, wall_detector
 
 router = APIRouter(prefix="/api", tags=["walls"])
@@ -13,7 +14,11 @@ async def walls(
     symbols: str | None = Query(None),
     interval: str = "5m",
 ) -> dict:
-    market = await market_service.get_market_data(exchange, parse_symbols(symbols) if symbols else None, interval)
+    parsed_symbols = parse_symbols(symbols) if symbols else None
+    if interval_to_seconds(interval) > 30:
+        market = await market_service.get_aggregated_market_data(exchange, parsed_symbols, interval)
+    else:
+        market = await market_service.get_market_data(exchange, parsed_symbols, interval)
     wall_data = await wall_detector.detect_walls(market["exchange"], market["pairs"])
     await alert_service.generate_alerts(market["exchange"], market["pairs"], wall_data["walls"])
     return envelope(
