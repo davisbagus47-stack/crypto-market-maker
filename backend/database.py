@@ -33,6 +33,21 @@ def compute_window_cutoff(interval: str) -> str:
     return cutoff.isoformat(timespec="seconds")
 
 
+def classify_interval_tier(interval: str) -> str:
+    """Classify interval into MICRO/MEDIUM/MACRO tier.
+
+    MICRO (<=30s): Real-time snapshot, no aggregation.
+    MEDIUM (1m to <1D): Moving-window SUM aggregation.
+    MACRO (>=1D): Downsampled bucket aggregation.
+    """
+    seconds = interval_to_seconds(interval)
+    if seconds <= 30:
+        return "MICRO"
+    elif seconds < 86400:
+        return "MEDIUM"
+    return "MACRO"
+
+
 async def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:

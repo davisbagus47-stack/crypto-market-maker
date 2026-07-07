@@ -706,7 +706,7 @@ function pairMarkup(pair) {
 function statusBadge(label) {
   const normalized = String(label).toLowerCase();
   const type =
-    normalized.includes("critical") || normalized.includes("low") || normalized.includes("weak") || normalized.includes("unacknowledged")
+    normalized.includes("critical") || normalized.includes("low") || normalized.includes("weak") || normalized.includes("unacknowledged") || normalized.includes("seller dominant") || normalized.includes("sell bias")
       ? "bad"
       : normalized.includes("warning") || normalized.includes("medium") || normalized.includes("caution") || normalized.includes("processing")
         ? "warn"
@@ -714,7 +714,7 @@ function statusBadge(label) {
           ? "info"
           : normalized.includes("custom") || normalized.includes("comparison")
             ? "violet"
-            : normalized.includes("daily") || normalized.includes("completed") || normalized.includes("active") || normalized.includes("high") || normalized.includes("healthy")
+            : normalized.includes("daily") || normalized.includes("completed") || normalized.includes("active") || normalized.includes("high") || normalized.includes("healthy") || normalized.includes("buyer dominant") || normalized.includes("buy bias")
               ? "good"
               : "neutral";
   return `<span class="badge ${type}">${label}</span>`;
@@ -811,7 +811,7 @@ function metricCardsOverview() {
     ? ws.sellWallCount
     : pairs.reduce((s, p) => s + (p.sellWall || 0), 0);
   const totalWalls = buyCount + sellCount;
-  const wallBiasText = ws.wallBias || (buyCount >= sellCount ? "Buyer Pressure" : "Seller Pressure");
+  const wallBiasText = ws.wallBias || (buyCount >= sellCount ? "Buyer Dominant" : "Seller Dominant");
   const wallBiasVal = totalWalls > 0 ? Math.round((buyCount / totalWalls) * 100) : 50;
   const wallBiasDir = buyCount >= sellCount ? "good" : "bad";
   const wallBiasColor = wallBiasDir === "good" ? palette.green : palette.red;
@@ -840,7 +840,7 @@ function metricCardsOverview() {
       delta: `${buyCount} Buy / ${sellCount} Sell`,
       direction: wallBiasDir,
       color: wallBiasColor,
-      extra: miniGauge(wallBiasVal, wallBiasColor, ["Sell", "Neutral", "Buy"])
+      extra: miniGauge(wallBiasVal, wallBiasColor, ["Seller Dom.", "Balanced", "Buyer Dom."])
     }),
     kpiCard({
       title: `Slippage Est. (${tf})`,
@@ -901,7 +901,7 @@ function marketOverviewTable() {
   const pagePairs = pairs.slice(start, end);
   const rows = pagePairs.map((pair, pageIndex) => {
     const index = start + pageIndex;
-    const condition = pair.imbalance > 0.08 ? "BUYER DOMINANT" : pair.imbalance < -0.08 ? "SELLER DOMINANT" : "NEUTRAL";
+    const condition = pair.imbalance > 0.08 ? "BUYER DOMINANT" : pair.imbalance < -0.08 ? "SELLER DOMINANT" : "BALANCED";
     const status = pair.liquidity > 75 ? "Healthy" : pair.liquidity > 55 ? "Caution" : "Low";
     const digits = pairDigits(pair);
     const bestBid = pairBestBid(pair);
@@ -1162,7 +1162,7 @@ function renderInsights() {
     // Derive from real state data
     const buyCount = ws.buyWallCount ?? pairs.reduce((s, p) => s + (p.buyWall || 0), 0);
     const sellCount = ws.sellWallCount ?? pairs.reduce((s, p) => s + (p.sellWall || 0), 0);
-    const biasText = ws.wallBias || (buyCount >= sellCount ? "Buyer Pressure" : "Seller Pressure");
+    const biasText = ws.wallBias || (buyCount >= sellCount ? "Buyer Dominant" : "Seller Dominant");
     const biasTone = buyCount >= sellCount ? "good" : "warn";
     const liqScore = kpis.liquidityScore ?? (pairs.length ? pairs.reduce((s, p) => s + (p.liquidity || 0), 0) / pairs.length : 70);
     const liqText = liqScore >= 70 ? "Healthy Liquidity" : liqScore >= 50 ? "Liquidity Needs Attention" : "Low Liquidity";
@@ -1497,7 +1497,7 @@ function renderWalls() {
         <td>${pairMarkup(pair)}</td><td><span class="${buyStatus === "STRONG" ? "text-good" : buyStatus === "MODERATE" ? "text-warn" : "text-bad"}">${buyStatus}</span><br>${compact(pair.bidDepth / 36)} @ ${formatNumber(pair.price * .998, pair.price < 1 ? 4 : 2)}</td>
         <td><span class="${sellStatus === "STRONG" ? "text-good" : sellStatus === "MODERATE" ? "text-warn" : "text-bad"}">${sellStatus}</span><br>${compact(pair.askDepth / 34)} @ ${formatNumber(pair.price * 1.002, pair.price < 1 ? 4 : 2)}</td>
         <td>${Math.round(12 + pair.suspicious / 2)}m ${String(Math.round(pair.liquidity / 2)).padStart(2, "0")}s</td><td>${scoreRing(pair.suspicious)}</td>
-        <td class="${pair.buyWall > pair.sellWall ? "text-good" : pair.buyWall < pair.sellWall ? "text-bad" : ""}">${pair.buyWall > pair.sellWall ? "Buy" : pair.buyWall < pair.sellWall ? "Sell" : "Neutral"}</td>
+        <td class="${pair.buyWall > pair.sellWall ? "text-good" : pair.buyWall < pair.sellWall ? "text-bad" : ""}">${pair.buyWall > pair.sellWall ? "Buyer Dominant" : pair.buyWall < pair.sellWall ? "Seller Dominant" : "Balanced"}</td>
         <td>${statusBadge(pair.liquidity > 70 ? "High" : "Healthy")}</td><td>22:15:16</td>
       </tr>
     `;
@@ -1506,7 +1506,7 @@ function renderWalls() {
     <div class="grid kpi-grid">
       ${kpiCard({ title: "Buy Wall Count", value: "56", delta: "5 vs 1H ago", color: palette.green, series: values(70, 28, 0.4) })}
       ${kpiCard({ title: "Sell Wall Count", value: "52", delta: "4 vs 1H ago", direction: "bad", color: palette.red, series: values(71, 28, 0.38) })}
-      ${kpiCard({ title: "Wall Bias", value: "Buyer Pressure", delta: "0.18 (Buy > Sell)", color: palette.green, extra: miniGauge(73, palette.green) })}
+      ${kpiCard({ title: "Wall Bias", value: "Buyer Dominant", delta: "0.18 (Buy > Sell)", color: palette.green, extra: miniGauge(73, palette.green) })}
       ${kpiCard({ title: "Average Wall Duration", value: "27m 34s", delta: "4m 12s vs 1H ago", color: palette.blue, series: values(72, 28, 0.28) })}
       ${kpiCard({ title: "Suspicious Score", value: "42", unit: "/100", delta: "8 vs 1H ago", direction: "warn", color: palette.amber, series: values(73, 28, 0.35) })}
       ${kpiCard({ title: "Possible Spoof Alerts", value: "18", delta: "6 vs 1H ago", direction: "bad", color: palette.red, series: values(74, 28, 0.34) })}
@@ -2122,6 +2122,7 @@ function filterBar() {
       <div>
         <label class="field-label">Interval</label>
         ${timeframePicker()}
+        ${tierBadgeHTML()}
       </div>
       <div>
         <label class="field-label">Auto Refresh</label>
@@ -2610,6 +2611,27 @@ document.addEventListener("input", (event) => {
   renderApp();
   fetchDashboardData("alerts", { silent: true }).then(() => renderApp());
 });
+
+function tierBadgeForInterval(interval) {
+  const liveIntervals = ["1s", "5s", "10s", "15s", "30s"];
+  const intervalSeconds = {
+    "1s": 1, "5s": 5, "10s": 10, "15s": 15, "30s": 30,
+    "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
+    "1h": 3600, "4h": 14400, "12h": 43200,
+    "1D": 86400, "1W": 604800, "1M": 2592000
+  }[interval] || 300;
+  if (liveIntervals.includes(interval)) {
+    return `<span class="badge good" style="margin-left:8px;font-size:10px;min-height:18px;min-width:auto;padding:1px 7px;letter-spacing:.04em;">● Live</span>`;
+  } else if (intervalSeconds < 86400) {
+    return `<span class="badge info" style="margin-left:8px;font-size:10px;min-height:18px;min-width:auto;padding:1px 7px;letter-spacing:.04em;">● Aggregated</span>`;
+  } else {
+    return `<span class="badge neutral" style="margin-left:8px;font-size:10px;min-height:18px;min-width:auto;padding:1px 7px;letter-spacing:.04em;">● Historical</span>`;
+  }
+}
+
+function tierBadgeHTML() {
+  return tierBadgeForInterval(state.timeframe);
+}
 
 renderApp();
 fetchDashboardData(state.page, { silent: true }).then(() => renderApp());

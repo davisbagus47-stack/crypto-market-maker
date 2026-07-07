@@ -1,3 +1,17 @@
+def bias_from_imbalance(imbalance: float) -> str:
+    """Derive bias label from imbalance value.
+
+    Positive imbalance = Buyer Dominant (bid depth > ask depth).
+    Negative imbalance = Seller Dominant (ask depth > bid depth).
+    Near-zero = Balanced.
+    """
+    if imbalance > 0.05:
+        return "Buyer Dominant"
+    elif imbalance < -0.05:
+        return "Seller Dominant"
+    return "Balanced"
+
+
 def build_insights(pairs: list[dict], wall_summary: dict | None = None) -> list[dict]:
     if not pairs:
         return []
@@ -12,13 +26,12 @@ def build_insights(pairs: list[dict], wall_summary: dict | None = None) -> list[
     liquidity_title = "Healthy Liquidity" if avg_liquidity >= 70 and avg_spread < 0.05 else "Liquidity Needs Attention"
     liquidity_tone = "good" if avg_liquidity >= 70 else "warn" if avg_liquidity >= 50 else "bad"
 
-    # Correct bias logic: positive imbalance = Buyer Dominant, negative = Seller Dominant
-    # Wall counts are secondary signal; imbalance is the primary indicator
-    if total_imbalance > 0.05:
+    bias_label = bias_from_imbalance(total_imbalance)
+    if bias_label == "Buyer Dominant":
         pressure_title = "Buyer Dominant"
         pressure_tone = "good"
         pressure_text = f"Order book imbalance is positive (+{total_imbalance:.4f}) — buy-side liquidity outweighs sell-side across selected markets."
-    elif total_imbalance < -0.05:
+    elif bias_label == "Seller Dominant":
         pressure_title = "Seller Dominant"
         pressure_tone = "warn"
         pressure_text = f"Order book imbalance is negative ({total_imbalance:.4f}) — sell-side liquidity outweighs buy-side across selected markets."

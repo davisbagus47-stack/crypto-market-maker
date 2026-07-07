@@ -1,7 +1,7 @@
 import json
 import math
 
-from database import execute, interval_to_seconds, now_iso
+from database import execute, classify_interval_tier, now_iso
 from services.market_service import get_aggregated_market_data, get_market_data
 
 
@@ -34,14 +34,16 @@ def regime_summary(pairs: list[dict]) -> dict:
 
 
 async def get_analytics(exchange: str, symbols: list[str] | None, interval: str) -> dict:
-    use_aggregated = interval_to_seconds(interval) > 30
+    tier = classify_interval_tier(interval)
+    use_aggregated = tier != "MICRO"
 
     if use_aggregated:
         market = await get_aggregated_market_data(exchange, symbols, interval)
         if not market.get("pairs"):
             market = await get_market_data(exchange, symbols, interval)
+            use_aggregated = False
 
-    if not use_aggregated or not market.get("pairs"):
+    if not use_aggregated:
         market = await get_market_data(exchange, symbols, interval)
 
     pairs = market["pairs"]
