@@ -492,6 +492,49 @@ async def get_aggregated_market_data(
         data["avg_volume_24h"] /= bc
         data["avg_change_24h"] /= bc
 
+    # ---- Fetch aggregated orderbook depth for imbalance calculation ----
+    # Imbalance must be based on order book depth, not ticker bid_qty/ask_qty
+    if total_seconds >= _LONG_INTERVAL_SECONDS:
+        bucket_sec = _downsample_group_seconds(interval)
+        ob_query = f"""
+            SELECT
+                symbol,
+                SUM(bid_depth_top10) AS total_bid_depth,
+                SUM(ask_depth_top10) AS total_ask_depth,
+                COUNT(*)             AS snapshot_count
+            FROM orderbook_snapshots
+            WHERE exchange = ?
+              AND symbol IN ({symbol_list})
+              AND timestamp >= ?
+            GROUP BY symbol,
+                     CAST((julianday(timestamp) * 86400.0 / {bucket_sec}) AS INTEGER)
+        """
+    else:
+        ob_query = f"""
+            SELECT
+                symbol,
+                SUM(bid_depth_top10) AS total_bid_depth,
+                SUM(ask_depth_top10) AS total_ask_depth,
+                COUNT(*)             AS snapshot_count
+            FROM orderbook_snapshots
+            WHERE exchange = ?
+              AND symbol IN ({symbol_list})
+              AND timestamp >= ?
+            GROUP BY symbol
+        """
+
+    ob_rows = await fetch_all(ob_query, (selected_exchange, cutoff))
+
+    # Build orderbook depth lookup
+    ob_map: dict[str, dict] = {}
+    for row in ob_rows:
+        sym = row["symbol"]
+        if sym not in ob_map:
+            ob_map[sym] = {"total_bid_depth": 0.0, "total_ask_depth": 0.0, "snapshot_count": 0}
+        ob_map[sym]["total_bid_depth"] += float(row["total_bid_depth"] or 0)
+        ob_map[sym]["total_ask_depth"] += float(row["total_ask_depth"] or 0)
+        ob_map[sym]["snapshot_count"] += int(row["snapshot_count"] or 0)
+
     # ---- Also fetch the latest orderbook snapshots for bids/asks ----
     book_query = f"""
         SELECT symbol, bids_json, asks_json
@@ -518,28 +561,23 @@ async def get_aggregated_market_data(
     pairs = []
     for symbol in selected_symbols:
         agg = agg_map.get(symbol)
+        ob = ob_map.get(symbol)
         if not agg or agg["snapshot_count"] == 0:
             # No historical data for this symbol in the window — skip
             continue
 
         book = book_map.get(symbol, {"bids": [], "asks": []})
 
-        total_bid = agg["total_bid_qty"]
-        total_ask = agg["total_ask_qty"]
         last_price = agg["avg_last_price"]
         best_bid = agg["avg_best_bid"]
         best_ask = agg["avg_best_ask"]
         spread_pct = agg["avg_spread_pct"]
 
-        # Correct imbalance formula: (bid - ask) / (bid + ask)
-        # Positive → Buyer Dominant, Negative → Seller Dominant
-        total_depth = total_bid + total_ask
-        imbalance = ((total_bid - total_ask) / total_depth) if total_depth > 0 else 0.0
-
-        # For aggregated data, bidDepth/askDepth represent the summed top-of-book
-        # quantity over the window — a measure of cumulative liquidity
-        bid_depth = total_bid * (best_bid if best_bid > 0 else 1)
-        ask_depth = total_ask * (best_ask if best_ask > 0 else 1)
+        # Imbalance from order book depth (not ticker qty)
+        bid_depth = ob["total_bid_depth"] if ob else 0.0
+        ask_depth = ob["total_ask_depth"] if ob else 0.0
+        total_depth = bid_depth + ask_depth
+        imbalance = ((bid_depth - ask_depth) / total_depth) if total_depth > 0 else 0.0
 
         score = liquidity_score(spread_pct, bid_depth, ask_depth, imbalance, 0.0)
 
@@ -552,8 +590,8 @@ async def get_aggregated_market_data(
             "lastPrice": round(last_price, 8),
             "bestBid": round(best_bid, 8),
             "bestAsk": round(best_ask, 8),
-            "bidQty": round(total_bid, 8),
-            "askQty": round(total_ask, 8),
+            "bidQty": round(agg["total_bid_qty"], 8),
+            "askQty": round(agg["total_ask_qty"], 8),
             "spread": round(spread_pct, 6),
             "spreadAbs": round((best_ask - best_bid) if best_ask and best_bid else 0, 8),
             "spreadPct": round(spread_pct, 6),
