@@ -24,32 +24,37 @@ logger = logging.getLogger("ws")
 
 
 class ConnectionManager:
-    """Melacak koneksi WebSocket yang aktif dan melakukan broadcast payload JSON ke semuanya."""
+    """Melacak koneksi WebSocket yang aktif beserta interval yang diminta masing-masing
+    client, dan melakukan broadcast payload JSON hanya ke client yang intervalnya cocok
+    (bukan lagi broadcast tunggal ke semua client tanpa memandang timeframe yang aktif)."""
 
     def __init__(self) -> None:
-        self.active_connections: list[WebSocket] = []
+        self.active_connections: dict[WebSocket, str] = {}
         self._lock = asyncio.Lock()
 
-    async def connect(self, websocket: WebSocket) -> None:
+    async def connect(self, websocket: WebSocket, interval: str) -> None:
         await websocket.accept()
         async with self._lock:
-            self.active_connections.append(websocket)
-        logger.info("WebSocket connected. Total active: %d", len(self.active_connections))
+            self.active_connections[websocket] = interval
+        logger.info("WebSocket connected (interval=%s). Total active: %d", interval, len(self.active_connections))
 
     async def disconnect(self, websocket: WebSocket) -> None:
         async with self._lock:
-            if websocket in self.active_connections:
-                self.active_connections.remove(websocket)
+            self.active_connections.pop(websocket, None)
         logger.info("WebSocket disconnected. Total active: %d", len(self.active_connections))
 
-    async def broadcast(self, message: dict) -> None:
-        if not self.active_connections:
+    async def active_intervals(self) -> set[str]:
+        async with self._lock:
+            return set(self.active_connections.values())
+
+    async def broadcast_for_interval(self, interval: str, message: dict) -> None:
+        async with self._lock:
+            targets = [ws for ws, iv in self.active_connections.items() if iv == interval]
+        if not targets:
             return
         payload = json.dumps(message, default=str)
-        async with self._lock:
-            connections = list(self.active_connections)
         stale: list[WebSocket] = []
-        for connection in connections:
+        for connection in targets:
             try:
                 await connection.send_text(payload)
             except Exception:
@@ -57,8 +62,7 @@ class ConnectionManager:
         if stale:
             async with self._lock:
                 for connection in stale:
-                    if connection in self.active_connections:
-                        self.active_connections.remove(connection)
+                    self.active_connections.pop(connection, None)
 
 
 manager = ConnectionManager()
@@ -166,7 +170,11 @@ async def debug_exchange(exchange: str = "Binance", limit: int = Query(20, ge=1,
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    await manager.connect(websocket)
+    # Interval aktif dikirim client lewat query string, mis. /ws?interval=15m.
+    # Ini yang sebelumnya hilang, sehingga collector selalu memakai interval
+    # default dari settings global alih-alih timeframe yang sedang dipilih user.
+    interval = websocket.query_params.get("interval") or "5m"
+    await manager.connect(websocket, interval)
     try:
         while True:
             # Dashboard ini bersifat server-push (broadcast-only), tapi kita tetap
@@ -184,38 +192,51 @@ async def market_collector() -> None:
         try:
             settings_data = await get_settings()
             exchange = settings_data.get("selectedExchange", "Binance")
-            interval = settings_data.get("refreshInterval", "5m")
-            market = await market_service.get_market_data(exchange, None, interval, persist=True)
-            wall_data = await wall_detector.detect_walls(market["exchange"], market["pairs"])
-            alert_list = await alert_service.generate_alerts(market["exchange"], market["pairs"], wall_data["walls"])
 
-            # Broadcast hasil tick ini ke semua client WebSocket yang aktif.
-            # Envelope-nya sengaja disamakan dengan response HTTP endpoint yang sudah
-            # ada (status/sourceStatus/exchange/interval/lastUpdate/exchangeError/data)
-            # supaya bisa langsung dikonsumsi oleh applyBackendData() di frontend.
-            #
-            # PENTING: `market["pairs"]` dan `wall_data` di sini adalah bentuk MENTAH
-            # dari service layer (persis yang dipakai untuk persist ke DB di atas) —
-            # BUKAN bentuk hasil reshape yang biasa dikembalikan oleh endpoint
-            # /api/overview (field kpis, insights, walls.summary/byPair, dsb). Karena
-            # file reshape itu (api/overview.py & service terkait) tidak ada di
-            # konteks saat ini, field-field agregat tersebut TIDAK diisi ulang di sini
-            # agar tidak menimpa data yang sudah benar dari fetch awal. Ganti bagian
-            # "data" di bawah ini dengan pemanggilan fungsi reshape yang sama dengan
-            # yang dipakai overview.router agar kpis/insights/walls ikut live juga.
-            await manager.broadcast({
-                "status": "ok",
-                "sourceStatus": market.get("sourceStatus"),
-                "exchange": market.get("exchange"),
-                "interval": interval,
-                "lastUpdate": now_iso(),
-                "exchangeError": market.get("exchangeError"),
-                "data": {
-                    "pairs": market.get("pairs", []),
-                    "walls": wall_data,
-                    "alerts": alert_list,
-                },
-            })
+            # Sebelumnya di sini hanya ada SATU interval global (dari settings yang
+            # tersimpan), dipakai untuk broadcast ke semua client sekaligus — jadi
+            # client yang sudah pindah ke timeframe lain (mis. 15m/1h) tetap ketimpa
+            # data default tiap tick. Sekarang setiap interval yang benar-benar
+            # sedang dipakai oleh client yang terhubung dihitung & dikirim terpisah,
+            # supaya masing-masing client menerima data sesuai timeframe aktifnya.
+            intervals = await manager.active_intervals()
+            if not intervals:
+                # Tidak ada client live, tapi tetap jalankan satu tick dengan interval
+                # default supaya persist-ke-DB & health-check tetap punya data segar.
+                intervals = {settings_data.get("refreshInterval", "5m")}
+
+            for interval in intervals:
+                market = await market_service.get_market_data(exchange, None, interval, persist=True)
+                wall_data = await wall_detector.detect_walls(market["exchange"], market["pairs"])
+                alert_list = await alert_service.generate_alerts(market["exchange"], market["pairs"], wall_data["walls"])
+
+                # Broadcast hasil tick ini ke client WebSocket yang intervalnya cocok.
+                # Envelope-nya sengaja disamakan dengan response HTTP endpoint yang sudah
+                # ada (status/sourceStatus/exchange/interval/lastUpdate/exchangeError/data)
+                # supaya bisa langsung dikonsumsi oleh applyBackendData() di frontend.
+                #
+                # PENTING: `market["pairs"]` dan `wall_data` di sini adalah bentuk MENTAH
+                # dari service layer (persis yang dipakai untuk persist ke DB di atas) —
+                # BUKAN bentuk hasil reshape yang biasa dikembalikan oleh endpoint
+                # /api/overview (field kpis, insights, walls.summary/byPair, dsb). Karena
+                # file reshape itu (api/overview.py & service terkait) tidak ada di
+                # konteks saat ini, field-field agregat tersebut TIDAK diisi ulang di sini
+                # agar tidak menimpa data yang sudah benar dari fetch awal. Ganti bagian
+                # "data" di bawah ini dengan pemanggilan fungsi reshape yang sama dengan
+                # yang dipakai overview.router agar kpis/insights/walls ikut live juga.
+                await manager.broadcast_for_interval(interval, {
+                    "status": "ok",
+                    "sourceStatus": market.get("sourceStatus"),
+                    "exchange": market.get("exchange"),
+                    "interval": interval,
+                    "lastUpdate": now_iso(),
+                    "exchangeError": market.get("exchangeError"),
+                    "data": {
+                        "pairs": market.get("pairs", []),
+                        "walls": wall_data,
+                        "alerts": alert_list,
+                    },
+                })
         except Exception:
             # Collector should never bring down the dashboard. Endpoints have their own fallback path.
             logger.exception("market_collector tick failed")

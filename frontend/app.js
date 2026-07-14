@@ -2372,7 +2372,11 @@ function resolveWebSocketUrl() {
   const host = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
     ? "127.0.0.1:8000"
     : window.location.host;
-  return `${protocol}${host}/ws`;
+  // Selalu kirim timeframe yang sedang aktif, bukan cuma di initial connect —
+  // reconnectWebSocket() dipanggil ulang tiap kali state.timeframe berubah supaya
+  // backend tidak diam-diam balik ke interval default di setiap tick.
+  const params = new URLSearchParams({ interval: state.timeframe });
+  return `${protocol}${host}/ws?${params}`;
 }
 
 function connectWebSocket() {
@@ -2388,6 +2392,10 @@ function connectWebSocket() {
     if (!state.autoRefresh) return;
     try {
       const payload = JSON.parse(event.data);
+      // Safety net: kalau ada pesan yang sempat "nyasar" dari koneksi lama tepat
+      // saat reconnect (race condition), jangan sampai menimpa timeframe yang
+      // sedang aktif dengan data interval yang sudah tidak relevan lagi.
+      if (payload && payload.interval && payload.interval !== state.timeframe) return;
       applyBackendData(state.page, payload);
       renderApp();
     } catch (error) {
@@ -2409,6 +2417,20 @@ function connectWebSocket() {
     // Auto-reconnect: coba sambung ulang dalam 3 detik jika koneksi terputus mendadak.
     wsReconnectTimer = window.setTimeout(connectWebSocket, 3000);
   };
+}
+
+function reconnectWebSocketWithActiveInterval() {
+  // Dipanggil saat user mengganti timeframe. Socket lama ditutup secara "silent"
+  // (onclose dilepas dulu) supaya tidak memicu toast "Backend unavailable" atau
+  // auto-reconnect basi, lalu langsung buka koneksi baru yang membawa interval
+  // yang baru dipilih lewat resolveWebSocketUrl().
+  window.clearTimeout(wsReconnectTimer);
+  if (socket) {
+    socket.onclose = null;
+    socket.onerror = null;
+    socket.close();
+  }
+  connectWebSocket();
 }
 
 async function saveSettingsToBackend() {
@@ -2533,6 +2555,10 @@ document.addEventListener("click", (event) => {
     state.lastUpdate = new Date();
     renderApp();
     fetchDashboardData(state.page).then(() => renderApp());
+    // Auto-refresh loop berjalan lewat WebSocket, bukan HTTP polling — jadi
+    // fetch di atas saja tidak cukup, koneksi live-nya juga harus dibuka ulang
+    // supaya tick berikutnya memakai interval yang baru dipilih, bukan default.
+    reconnectWebSocketWithActiveInterval();
   }
   if (action === "auto-refresh") {
     // Toggle ini sekarang mengatur apakah update real-time dari WebSocket
